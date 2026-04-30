@@ -1,14 +1,15 @@
 const Parliament = (() => {
-
   function computeLayout(nSeats, innerR, outerR) {
     if (nSeats <= 0) return null;
     for (let nRows = 2; nRows <= 12; nRows++) {
       const rowSpan = outerR - innerR;
       const rowH = rowSpan / Math.max(nRows - 1, 1);
       const dotR = rowH * 0.28;
-      const step = dotR * 2 * 1.10;
+      const step = dotR * 2 * 1.1;
       const radii = Array.from({ length: nRows }, (_, i) => innerR + rowH * i);
-      const caps = radii.map(r => Math.max(1, Math.floor(Math.PI * r / step)));
+      const caps = radii.map((r) =>
+        Math.max(1, Math.floor((Math.PI * r) / step)),
+      );
       const total = caps.reduce((a, b) => a + b, 0);
       if (total >= nSeats) {
         const rowSeats = _distributePro(nSeats, caps);
@@ -18,9 +19,11 @@ const Parliament = (() => {
     const nRows = 12;
     const rowH = (outerR - innerR) / (nRows - 1);
     const dotR = rowH * 0.28;
-    const step = dotR * 2 * 1.10;
+    const step = dotR * 2 * 1.1;
     const radii = Array.from({ length: nRows }, (_, i) => innerR + rowH * i);
-    const caps = radii.map(r => Math.max(1, Math.floor(Math.PI * r / step)));
+    const caps = radii.map((r) =>
+      Math.max(1, Math.floor((Math.PI * r) / step)),
+    );
     const rowSeats = _distributePro(nSeats, caps);
     return { dotR, radii, rowSeats };
   }
@@ -33,7 +36,7 @@ const Parliament = (() => {
       if (i === caps.length - 1) {
         result[i] = total - assigned;
       } else {
-        const s = Math.min(cap, Math.round(total * cap / capSum));
+        const s = Math.min(cap, Math.round((total * cap) / capSum));
         result[i] = s;
         assigned += s;
       }
@@ -71,19 +74,19 @@ const Parliament = (() => {
   }
 
   function render({ container, legendContainer, parties, tooltip }) {
-    container.innerHTML = '';
-    legendContainer.innerHTML = '';
+    container.innerHTML = "";
+    legendContainer.innerHTML = "";
 
     const totalSeats = parties.reduce((s, p) => s + p.seats, 0);
     if (!totalSeats) {
-      container.innerHTML = '<p class="empty">Nessun seggio disponibile.</p>';
+      container.innerHTML = '<p class="empty">Geen zetels beschikbaar.</p>';
       return;
     }
 
     const W = Math.max(container.clientWidth || 540, 340);
     const H = Math.round(W * 0.55);
     const cx = W / 2;
-    const cy = H * 0.90;
+    const cy = H * 0.9;
     const outerR = Math.min(W * 0.47, H * 0.93);
     const innerR = outerR * 0.24;
 
@@ -94,7 +97,7 @@ const Parliament = (() => {
     const sorted = [...parties].sort((a, b) => b.seats - a.seats);
     let idx = 0;
     const colored = [];
-    sorted.forEach(party => {
+    sorted.forEach((party) => {
       const users = party.users || [];
       for (let i = 0; i < party.seats; i++) {
         if (idx >= pts.length) break;
@@ -112,130 +115,127 @@ const Parliament = (() => {
       }
     });
 
-    const svg = d3.select(container)
-      .append('svg')
-      .attr('viewBox', `0 0 ${W} ${H}`)
-      .style('overflow', 'visible')
-      .style('width', '100%')
-      .style('height', 'auto');
+    const svg = d3
+      .select(container)
+      .append("svg")
+      .attr("viewBox", `0 0 ${W} ${H}`)
+      .style("overflow", "visible")
+      .style("width", "100%")
+      .style("height", "auto");
 
-    // Patterns per avatar (usati come riempimento)
-    const defs = svg.append('defs');
+    const defs = svg.append("defs");
     const avatarPatterns = {};
-    colored.forEach(d => {
+    colored.forEach((d) => {
       if (d.avatarUrl && !avatarPatterns[d.avatarUrl]) {
-        const patternId = 'avatar-' + d.userId;
-        const pattern = defs.append('pattern')
-          .attr('id', patternId)
-          .attr('patternUnits', 'objectBoundingBox')  // fondamentale
-          .attr('width', 1)   // 100% del bounding box
-          .attr('height', 1); // 100% del bounding box
-        // L'immagine copre tutto il pattern
-        pattern.append('image')
-          .attr('x', 0)
-          .attr('y', 0)
-          .attr('width', 1)
-          .attr('height', 1)
-          .attr('preserveAspectRatio', 'xMidYMid slice')
-          .attr('href', d.avatarUrl);
+        const patternId = "avatar-" + d.userId;
+        const pattern = defs
+          .append("pattern")
+          .attr("id", patternId)
+          .attr("patternUnits", "objectBoundingBox")
+          .attr("width", 1)
+          .attr("height", 1);
+
+        pattern
+          .append("image")
+          .attr("x", 0)
+          .attr("y", 0)
+          .attr("width", 1)
+          .attr("height", 1)
+          .attr("preserveAspectRatio", "xMidYMid slice")
+          .attr("href", d.avatarUrl);
+
         avatarPatterns[d.avatarUrl] = patternId;
       }
     });
 
-    // Linea maggioranza
     const majority = Math.floor(totalSeats / 2) + 1;
     const majAngle = -Math.PI + Math.PI * (majority / totalSeats);
-    const lx1 = cx + (innerR - 6) * Math.cos(majAngle);
-    const ly1 = cy + (innerR - 6) * Math.sin(majAngle);
-    const lx2 = cx + (outerR + 6) * Math.cos(majAngle);
-    const ly2 = cy + (outerR + 6) * Math.sin(majAngle);
 
-    svg.append('line')
-      .attr('x1', lx1).attr('y1', ly1)
-      .attr('x2', lx2).attr('y2', ly2)
-      .attr('stroke', 'rgba(197,150,74,.55)')
-      .attr('stroke-width', 1.2)
-      .attr('stroke-dasharray', '3 3');
+    svg
+      .append("text")
+      .attr("x", cx + (outerR + 13) * Math.cos(majAngle))
+      .attr("y", cy + (outerR + 13) * Math.sin(majAngle) + 3)
+      .attr("fill", "rgba(197,150,74,.7)")
+      .attr("font-size", 9)
+      .attr("font-family", "Sora, sans-serif")
+      .text("50%+1");
 
-    svg.append('text')
-      .attr('x', cx + (outerR + 13) * Math.cos(majAngle))
-      .attr('y', cy + (outerR + 13) * Math.sin(majAngle) + 3)
-      .attr('fill', 'rgba(197,150,74,.7)')
-      .attr('font-size', 9)
-      .attr('font-family', 'Sora, sans-serif')
-      .text('50%+1');
-
-    // Dots – cerchio colorato + immagine avatar ritagliata
-    svg.selectAll('g.seat-group')
+    svg
+      .selectAll("g.seat-group")
       .data(colored)
       .enter()
-      .append('g')
-      .attr('class', 'seat-group')
-      .attr('transform', d => `translate(${cx + d.radius * Math.cos(d.angle)}, ${cy + d.radius * Math.sin(d.angle)})`)
+      .append("g")
+      .attr("class", "seat-group")
+      .attr(
+        "transform",
+        (d) =>
+          `translate(${cx + d.radius * Math.cos(d.angle)}, ${cy + d.radius * Math.sin(d.angle)})`,
+      )
       .each(function (d) {
         const g = d3.select(this);
-        // Cerchio esterno colorato (bordo partito)
-        g.append('circle')
-          .attr('r', layout.dotR)
-          .attr('fill', d.color)
-          .attr('stroke', d => d.color)
-          .attr('stroke-width', 3.5);
+
+        g.append("circle")
+          .attr("r", layout.dotR)
+          .attr("fill", d.color)
+          .attr("stroke", d.color)
+          .attr("stroke-width", 3.5);
 
         if (d.avatarUrl) {
-          // Definisci un clipPath per ritagliare l'immagine in un cerchio
-          const clipId = 'clip-' + d.userId + '-' + Math.random().toString(36).substr(2, 6);
-          defs.append('clipPath')
-            .attr('id', clipId)
-            .append('circle')
-            .attr('cx', 0)
-            .attr('cy', 0)
-            .attr('r', layout.dotR - 2);
+          const clipId =
+            "clip-" + d.userId + "-" + Math.random().toString(36).substr(2, 6);
+          defs
+            .append("clipPath")
+            .attr("id", clipId)
+            .append("circle")
+            .attr("r", layout.dotR - 2);
 
-          // Immagine centrata e ritagliata
-          g.append('image')
-            .attr('x', -(layout.dotR - 2))
-            .attr('y', -(layout.dotR - 2))
-            .attr('width', (layout.dotR - 2) * 2)
-            .attr('height', (layout.dotR - 2) * 2)
-            .attr('preserveAspectRatio', 'xMidYMid slice')
-            .attr('href', d.avatarUrl)
-            .attr('clip-path', `url(#${clipId})`);
+          g.append("image")
+            .attr("x", -(layout.dotR - 2))
+            .attr("y", -(layout.dotR - 2))
+            .attr("width", (layout.dotR - 2) * 2)
+            .attr("height", (layout.dotR - 2) * 2)
+            .attr("preserveAspectRatio", "xMidYMid slice")
+            .attr("href", d.avatarUrl)
+            .attr("clip-path", `url(#${clipId})`);
         }
       })
-      .on('mouseover', (event, d) => {
+      .on("mouseover", (event, d) => {
         tooltip.style.opacity = 1;
         const avatarHtml = d.avatarUrl
           ? `<img src="${d.avatarUrl}" class="tooltip-avatar">`
-          : '';
+          : "";
         tooltip.innerHTML = `
           <div class="tt-party">${d.party}</div>
-          ${d.username ? `<div class="tt-user">${avatarHtml} ${d.username}</div>` : ''}
-          <div class="tt-seat">Seggio ${d.seatIdx + 1} / ${d.total}</div>
+          ${d.username ? `<div class="tt-user">${avatarHtml} ${d.username}</div>` : ""}
+          <div class="tt-seat">Zetel ${d.seatIdx + 1} / ${d.total}</div>
         `;
       })
-      .on('mousemove', event => {
-        tooltip.style.left = (event.clientX + 14) + 'px';
-        tooltip.style.top = (event.clientY - 36) + 'px';
+      .on("mousemove", (event) => {
+        tooltip.style.left = event.clientX + 14 + "px";
+        tooltip.style.top = event.clientY - 36 + "px";
       })
-      .on('mouseout', () => { tooltip.style.opacity = 0; })
-      .on('click', (event, d) => {
+      .on("mouseout", () => {
+        tooltip.style.opacity = 0;
+      })
+      .on("click", (event, d) => {
         if (d.userId) {
-          window.open(`${APP_BASE}/user/${d.userId}`, '_blank');
+          window.open(`${APP_BASE}/user/${d.userId}`, "_blank");
         }
       });
 
-    svg.append('text')
-      .attr('x', cx).attr('y', cy - 6)
-      .attr('text-anchor', 'middle')
-      .attr('fill', '#535e72')
-      .attr('font-size', 10)
-      .attr('font-family', 'Sora, sans-serif')
-      .text(`${totalSeats} seggi`);
+    svg
+      .append("text")
+      .attr("x", cx)
+      .attr("y", cy - 6)
+      .attr("text-anchor", "middle")
+      .attr("fill", "#535e72")
+      .attr("font-size", 10)
+      .attr("font-family", "Sora, sans-serif")
+      .text(`${totalSeats} zetels`);
 
-    // Legend
-    sorted.forEach(p => {
-      const el = document.createElement('div');
-      el.className = 'leg-item';
+    sorted.forEach((p) => {
+      const el = document.createElement("div");
+      el.className = "leg-item";
       el.title = p.name;
       el.innerHTML = `
         <span class="leg-dot" style="background:${p.color}"></span>

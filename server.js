@@ -1,8 +1,11 @@
-const http = require('http');
+const http = require("http");
 const PORT = 3000;
-const API_KEY = ''; 
+const API_KEY = "";
 
-const CACHE_TTL = 5 * 60 * 1000; 
+// BELGIË SETUP
+const DEFAULT_COUNTRY_ID = "6813b6d446e731854c7ac7a4";
+
+const CACHE_TTL = 5 * 60 * 1000;
 const BAD_IDS = new Set();
 
 const countryCache = {};
@@ -16,27 +19,27 @@ function getCountryCache(countryId) {
       partyDetails: {},
       lastPartyFetch: {},
       userDetails: {},
-      parties: null,           // ← nuova proprietà
-      lastPartiesFetch: 0      // ← nuova proprietà
+      parties: null,
+      lastPartiesFetch: 0,
     };
   }
   return countryCache[countryId];
 }
 
-/* ---- Chiamata alle API reali ---- */
+/* ---- API Functies ---- */
 async function wareraFetch(base, proc, input, isPost = false) {
   let url = `${base}/${proc}`;
   const headers = {
-    'Content-Type': 'application/json',
-    ...(API_KEY && { Authorization: `Bearer ${API_KEY}` })
+    "Content-Type": "application/json",
+    ...(API_KEY && { Authorization: `Bearer ${API_KEY}` }),
   };
 
   if (isPost) {
-    url += '?batch=1';
+    url += "?batch=1";
     const res = await fetch(url, {
-      method: 'POST',
+      method: "POST",
       headers,
-      body: JSON.stringify({ 0: input })
+      body: JSON.stringify({ 0: input }),
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const json = await res.json();
@@ -50,243 +53,165 @@ async function wareraFetch(base, proc, input, isPost = false) {
   }
 }
 
-/* ---- Aggiorna la lista elezioni per un singolo paese ---- */
 async function refreshElectionsList(countryId) {
   const cache = getCountryCache(countryId);
-  console.log(`   📡 Aggiornamento elezioni per ${countryId}...`);
+  console.log(`   📡 Verkiezingen ophalen voor ${countryId}...`);
   try {
-    const data = await wareraFetch('https://api5.warera.io/trpc', 'election.getElections', { countryId, limit: 100, direction: 'forward' });
+    const data = await wareraFetch(
+      "https://api5.warera.io/trpc",
+      "election.getElections",
+      { countryId, limit: 100, direction: "forward" },
+    );
     cache.elections = data?.items || data?.results || [];
     cache.lastElectionsFetch = Date.now();
-    console.log(`   ✅ ${cache.elections.length} elezioni trovate.`);
+    console.log(`   ✅ ${cache.elections.length} verkiezingen gevonden.`);
   } catch (err) {
-    console.error(`   ❌ Errore per ${countryId}:`, err.message);
+    console.error(`   ❌ Fout voor ${countryId}:`, err.message);
     cache.elections = cache.elections || [];
-    throw err; // Rilancia per gestire il 429
+    throw err;
   }
 }
 
-/* ---- PRERISCALDAMENTO con pausa di 2 secondi e retry automatico ---- */
+/* ---- Preload ---- */
 async function preloadAllCountries() {
-  console.log('🌍 Preload: scarico lista nazioni...');
-  let countries = [];
+  console.log("🌍 Preload gestart...");
   try {
-    const all = await wareraFetch('https://api5.warera.io/trpc', 'country.getAllCountries', {});
-    countries = all?.items || all?.results || all || [];
-  } catch (err) {
-    console.error('❌ Errore durante il preload delle nazioni:', err.message);
-    return;
-  }
+    // We zorgen dat België als eerste wordt geladen
+    await refreshElectionsList(DEFAULT_COUNTRY_ID);
 
-  if (!Array.isArray(countries) || countries.length === 0) {
-    console.warn('⚠️ Nessuna nazione ricevuta. Uso solo Italia.');
-    return;
-  }
+    const all = await wareraFetch(
+      "https://api5.warera.io/trpc",
+      "country.getAllCountries",
+      {},
+    );
+    const countries = all?.items || all?.results || all || [];
 
-  // Ordina per popolazione (se presente) oppure alfabetico
-  const sorted = countries.sort((a, b) => (b.population || 0) - (a.population || 0));
-
-  console.log(`✅ ${sorted.length} nazioni trovate. Inizio preriscaldamento con pausa di 2 secondi...`);
-
-  for (const country of sorted) {
-    if (!country._id) continue;
-
-    // Attendi 2 secondi prima di ogni richiesta
-    await new Promise(resolve => setTimeout(resolve, 2000));
-
-    let success = false;
-    for (let attempt = 1; attempt <= 5; attempt++) {
+    // De rest van de landen laden (met pauze tegen ratelimits)
+    const sorted = countries.sort(
+      (a, b) => (b.population || 0) - (a.population || 0),
+    );
+    for (const country of sorted) {
+      if (!country._id || country._id === DEFAULT_COUNTRY_ID) continue;
+      await new Promise((r) => setTimeout(r, 2000));
       try {
         await refreshElectionsList(country._id);
-        success = true;
-        break;
-      } catch (err) {
-        if (err.message.includes('429')) {
-          const wait = attempt * 5000;
-          console.log(`   ⏳ ${country._id} ratelimit. Ritento fra ${wait / 1000}s...`);
-          await new Promise(resolve => setTimeout(resolve, wait));
-        } else {
-          console.error(`   ❌ Errore definitivo per ${country._id}: ${err.message}`);
-          break;
-        }
-      }
+      } catch (e) {}
     }
-
-    if (!success) {
-      console.warn(`   ⚠️ Impossibile scaricare le elezioni per ${country._id} dopo 5 tentativi.`);
-    }
+    console.log("🏁 Preload voltooid!");
+  } catch (err) {
+    console.error("❌ Preload mislukt:", err.message);
   }
-
-  console.log('🏁 Preriscaldamento completato!');
 }
 
-/* ---- Server HTTP ---- */
+/* ---- Server ---- */
 const server = http.createServer(async (req, res) => {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, ngrok-skip-browser-warning');
-  res.setHeader('Content-Type', 'application/json');
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  res.setHeader(
+    "Access-Control-Allow-Headers",
+    "Content-Type, Authorization, ngrok-skip-browser-warning",
+  );
 
-  if (req.method === 'OPTIONS') {
-    res.writeHead(200);
+  if (req.method === "OPTIONS") {
+    res.writeHead(204);
     res.end();
     return;
   }
 
+  res.setHeader("Content-Type", "application/json");
   const url = new URL(req.url, `http://${req.headers.host}`);
   const path = url.pathname;
 
   const respond = (data, status = 200) => {
-    try {
-      const json = JSON.stringify(data);
-      res.writeHead(status);
-      res.end(json);
-    } catch (e) {
-      console.error('❌ Errore serializzazione JSON:', e.message);
-      res.writeHead(500);
-      res.end('{}');
-    }
+    res.writeHead(status);
+    res.end(JSON.stringify(data));
   };
 
   try {
-    // 1. Lista elezioni
-    if (path === '/api/elections') {
-      const countryId = url.searchParams.get('countryId') || '6813b6d446e731854c7ac7a2';
+    // 1. Verkiezingen (Standaard België)
+    if (path === "/api/elections") {
+      const countryId = url.searchParams.get("countryId") || DEFAULT_COUNTRY_ID;
       const cache = getCountryCache(countryId);
-      if (!cache.elections || Date.now() - cache.lastElectionsFetch > CACHE_TTL) {
+      if (
+        !cache.elections ||
+        Date.now() - cache.lastElectionsFetch > CACHE_TTL
+      ) {
         await refreshElectionsList(countryId);
       }
-      respond({ items: cache.elections || [] });
-      return;
+      return respond({ items: cache.elections || [] });
     }
 
-    // 2. Dettaglio elezione
-    if (path === '/api/election') {
-      const electionId = url.searchParams.get('id');
-      if (!electionId) return respond({ error: 'Missing id' }, 400);
-      if (BAD_IDS.has(electionId)) return respond({});
-
-      for (const cid of Object.keys(countryCache)) {
-        if (countryCache[cid]?.electionDetails?.[electionId]) {
-          return respond(countryCache[cid].electionDetails[electionId]);
-        }
-      }
-
-      console.log(`📡 Richiesta dettagli elezione ${electionId}...`);
-      try {
-        const data = await wareraFetch('https://api5.warera.io/trpc', 'election.getElection', { electionId });
-        if (data) {
-          const country = data.country || 'unknown';
-          const cache = getCountryCache(country);
-          cache.electionDetails[electionId] = data;
-        }
-        respond(data || {});
-      } catch (err) {
-        console.error(`❌ Elezione ${electionId} non disponibile: ${err.message}`);
-        BAD_IDS.add(electionId);
-        respond({});
-      }
-      return;
-    }
-
-    // 3. Dettaglio partito
-    if (path === '/api/party') {
-      const partyId = url.searchParams.get('id');
-      if (!partyId) return respond({ error: 'Missing id' }, 400);
-
-      for (const cid of Object.keys(countryCache)) {
-        if (countryCache[cid]?.partyDetails?.[partyId]) {
-          return respond(countryCache[cid].partyDetails[partyId]);
-        }
-      }
-
-      console.log(`📡 Richiesta dettagli partito ${partyId}...`);
-      try {
-        const data = await wareraFetch('https://api2.warera.io/trpc', 'party.getById', { partyId }, true);
-        if (data) {
-          const country = data.country || 'unknown';
-          const cache = getCountryCache(country);
-          cache.partyDetails[partyId] = data;
-          cache.lastPartyFetch[partyId] = Date.now();
-        }
-        respond(data || {});
-      } catch (err) {
-        console.error(`❌ Partito ${partyId} non trovato: ${err.message}`);
-        respond({});
-      }
-      return;
-    }
-
-    // 4. Dati utente
-    if (path === '/api/user') {
-      const userId = url.searchParams.get('id');
-      if (!userId) return respond({ error: 'Missing id' }, 400);
-
-      for (const cid of Object.keys(countryCache)) {
-        if (countryCache[cid]?.userDetails?.[userId]) {
-          return respond(countryCache[cid].userDetails[userId]);
-        }
-      }
-
-      console.log(`📡 Richiesta dati utente ${userId}...`);
-      try {
-        const data = await wareraFetch('https://api2.warera.io/trpc', 'user.getUserLite', { userId });
-        if (data) {
-          const fallback = Object.keys(countryCache)[0] || 'generic';
-          const cache = getCountryCache(fallback);
-          cache.userDetails[userId] = data;
-        }
-        respond(data || {});
-      } catch (err) {
-        console.error(`❌ Utente ${userId} non trovato: ${err.message}`);
-        respond({});
-      }
-      return;
-    }
-
-    // 5. Lista paesi
-    if (path === '/api/countries') {
-      const allCache = getCountryCache('__all__');
-      if (!allCache.countries || Date.now() - (allCache.lastCountriesFetch || 0) > 24 * 60 * 60 * 1000) {
-        console.log('📡 Richiesta lista nazioni...');
-        try {
-          const data = await wareraFetch('https://api5.warera.io/trpc', 'country.getAllCountries', {});
-          allCache.countries = data?.items || data?.results || data || [];
-          allCache.lastCountriesFetch = Date.now();
-        } catch (err) {
-          console.error('❌ Errore recupero nazioni:', err.message);
-          allCache.countries = allCache.countries || [];
-        }
-      }
-      respond({ items: allCache.countries || [] });
-      return;
-    }
-    // 6. Lista partiti di una nazione (con paginazione)
-    if (path === '/api/parties') {
-      const countryId = url.searchParams.get('countryId') || '6813b6d446e731854c7ac7a2';
+    // 2. Partijen (Standaard België)
+    if (path === "/api/parties") {
+      const countryId = url.searchParams.get("countryId") || DEFAULT_COUNTRY_ID;
       const cache = getCountryCache(countryId);
-      if (!cache.parties || Date.now() - (cache.lastPartiesFetch || 0) > 60 * 60 * 1000) {
-        console.log(`📡 Richiesta lista partiti per ${countryId}...`);
-        try {
-          const data = await wareraFetch('https://api2.warera.io/trpc', 'party.getManyPaginated', { countryId, limit: 100, direction: 'forward' }, true);
-          cache.parties = data?.items || data?.results || data || [];
-          cache.lastPartiesFetch = Date.now();
-        } catch (err) {
-          console.error(`❌ Errore recupero partiti per ${countryId}:`, err.message);
-          cache.parties = cache.parties || [];
-        }
+      if (
+        !cache.parties ||
+        Date.now() - (cache.lastPartiesFetch || 0) > 60 * 60 * 1000
+      ) {
+        const data = await wareraFetch(
+          "https://api2.warera.io/trpc",
+          "party.getManyPaginated",
+          { countryId, limit: 100, direction: "forward" },
+          true,
+        );
+        cache.parties = data?.items || data?.results || data || [];
+        cache.lastPartiesFetch = Date.now();
       }
-      respond({ items: cache.parties || [] });
-      return;
+      return respond({ items: cache.parties || [] });
     }
 
-    respond({ error: 'Not found' }, 404);
+    // 3. Landenlijst
+    if (path === "/api/countries") {
+      const allCache = getCountryCache("__all__");
+      if (
+        !allCache.countries ||
+        Date.now() - (allCache.lastCountriesFetch || 0) > 24 * 60 * 60 * 1000
+      ) {
+        const data = await wareraFetch(
+          "https://api5.warera.io/trpc",
+          "country.getAllCountries",
+          {},
+        );
+        allCache.countries = data?.items || data?.results || data || [];
+        allCache.lastCountriesFetch = Date.now();
+      }
+      return respond({ items: allCache.countries || [] });
+    }
+
+    // Overige routes (party, user, election details)
+    if (path === "/api/election") {
+      const electionId = url.searchParams.get("id");
+      if (!electionId) return respond({ error: "Missing id" }, 400);
+      const data = await wareraFetch(
+        "https://api5.warera.io/trpc",
+        "election.getElection",
+        { electionId },
+      );
+      return respond(data || {});
+    }
+
+    if (path === "/api/party") {
+      const partyId = url.searchParams.get("id");
+      if (!partyId) return respond({ error: "Missing id" }, 400);
+      const data = await wareraFetch(
+        "https://api2.warera.io/trpc",
+        "party.getById",
+        { partyId },
+        true,
+      );
+      return respond(data || {});
+    }
+
+    respond({ error: "Niet gevonden" }, 404);
   } catch (err) {
-    console.error('❌ Errore del server:', err.stack || err.message);
     respond({ error: err.message }, 500);
   }
 });
 
-server.listen(PORT, async () => {
-  console.log(`🚀 Server proxy attivo su http://localhost:${PORT}`);
+server.listen(PORT, () => {
+  console.log(
+    `🚀 Proxy server draait op poort ${PORT} (Standaard land: België)`,
+  );
   preloadAllCountries();
 });

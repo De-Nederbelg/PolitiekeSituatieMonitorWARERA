@@ -1,135 +1,122 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="nl">
 
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>WarEra · Political View</title>
+  <title>WarEra · Politiek Overzicht</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link
-    href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@500;600;700&family=Sora:wght@300;400;500;600&display=swap"
-    rel="stylesheet">
-  <!-- Tom Select CSS -->
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@500;600;700&family=Sora:wght@300;400;500;600&display=swap"
+        rel="stylesheet">
   <link href="https://cdn.jsdelivr.net/npm/tom-select@2.2.2/dist/css/tom-select.css" rel="stylesheet">
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
   <link rel="stylesheet" href="style.css">
-
   <script defer src="https://cloud.umami.is/script.js" data-website-id="35489c6a-c6ac-453d-a0d6-cd17972dabd7"></script>
 </head>
 
 <body>
   <div class="app">
-
     <!-- HEADER -->
     <header class="header">
       <div class="header-brand">
         <div class="header-logo">🏛️</div>
         <div>
-          <div class="header-title">Political View</div>
-          <div class="header-sub">WarEra · Live data from api5.warera.io</div>
+          <div class="header-title">Politiek Overzicht</div>
+          <div class="header-sub">WarEra · Live gegevens van api5.warera.io</div>
         </div>
       </div>
       <div class="header-controls">
-        <!-- COUNTRY SELECTION -->
         <div class="input-wrap select-wrap" style="margin-right:12px;">
           <select id="countrySelect">
-            <option value="">— Choose a country —</option>
+            <option value="">— Kies een land —</option>
           </select>
         </div>
         <div class="input-wrap select-wrap">
           <select id="electionSelect">
-            <option value="">— Choose an election —</option>
+            <option value="">— Kies een verkiezing —</option>
           </select>
         </div>
-        <span class="or-divider">or</span>
+        <span class="or-divider">of</span>
         <div class="input-wrap">
-          <input type="text" id="electionIdInput" placeholder="Manual election ID" spellcheck="false">
+          <input type="text" id="electionIdInput" placeholder="Handmatige verkiezings-ID" spellcheck="false">
         </div>
-        <button class="btn-load" id="loadBtn">▶ Load</button>
-        <span class="badge-status loading" id="statusBadge">Waiting…</span>
+        <button class="btn-load" id="loadBtn">▶ Laden</button>
+        <span class="badge-status loading" id="statusBadge">Wachten…</span>
       </div>
     </header>
-
-    <!-- STATS with skeleton -->
     <div class="stats-row" id="statsRow">
       <div class="stat hl">
-        <div class="stat-label">Total seats</div>
+        <div class="stat-label">Totaal zetels</div>
         <div class="stat-value skeleton-val" id="stat-seats">—</div>
-        <div class="stat-sub">In parliament</div>
+        <div class="stat-sub">In parlement</div>
       </div>
       <div class="stat">
-        <div class="stat-label">Parties</div>
+        <div class="stat-label">Partijen</div>
         <div class="stat-value skeleton-val" id="stat-parties">—</div>
-        <div class="stat-sub">Represented</div>
+        <div class="stat-sub">Vertegenwoordigd</div>
       </div>
       <div class="stat">
-        <div class="stat-label">Elected</div>
+        <div class="stat-label">Gekozen</div>
         <div class="stat-value skeleton-val" id="stat-elected">—</div>
-        <div class="stat-sub">MPs</div>
+        <div class="stat-sub">Parlementsleden</div>
       </div>
       <div class="stat">
-        <div class="stat-label">Majority</div>
+        <div class="stat-label">Meerderheid</div>
         <div class="stat-value skeleton-val" id="stat-majority">—</div>
-        <div class="stat-sub">Threshold (50%+1)</div>
+        <div class="stat-sub">Drempel (50%+1)</div>
       </div>
       <div class="stat hl">
-        <div class="stat-label">First party</div>
+        <div class="stat-label">Grootste partij</div>
         <div class="stat-value skeleton-val" id="stat-leader" style="font-size:.9rem;padding-top:7px;">—</div>
-        <div class="stat-sub">By seats</div>
+        <div class="stat-sub">Op basis van zetels</div>
       </div>
     </div>
-
-    <!-- ══ TIMELINE ══ -->
+    <!-- TIMELINE -->
     <div class="panel timeline-panel" id="timelinePanel" style="display:none; margin-bottom:16px;">
       <div class="panel-head">
         <div class="panel-icon">📈</div>
-        <h2>Congress Election History</h2>
+        <h2>Geschiedenis van congresverkiezingen</h2>
         <span class="badge-count" id="timelineBadge"></span>
         <div class="timeline-legend" id="timelineLegend"></div>
       </div>
       <div class="timeline-chart-wrap">
-        <canvas id="timelineChart" role="img" aria-label="Seats trend over time"></canvas>
+        <canvas id="timelineChart" role="img" aria-label="Zeteltrend door de tijd"></canvas>
       </div>
       <div class="timeline-footer">
-        <span class="timeline-tip">💡 Click an election to load it · Congress elections only</span>
+        <span class="timeline-tip">💡 Klik op een verkiezing om deze te laden · Alleen congresverkiezingen</span>
       </div>
     </div>
-
-    <!-- ══ PRESIDENTIAL VIEW ══ -->
+    <!-- PRESIDENT -->
     <div id="president-view" style="display:none;">
       <div class="panel pres-panel">
         <div class="panel-head">
           <div class="panel-icon">🗳</div>
-          <h2>Presidential Election</h2>
+          <h2>Presidentiële verkiezing</h2>
           <span class="badge-count" id="pres-status-badge" style="margin-left:auto;"></span>
         </div>
         <div id="pres-winner-banner" class="pres-winner" style="display:none;"></div>
         <div id="pres-race" class="pres-race"></div>
         <div class="pres-chart-wrap">
-          <canvas id="presidentChart" role="img" aria-label="Presidential election votes"></canvas>
+          <canvas id="presidentChart" role="img" aria-label="Stemmen presidentiële verkiezing"></canvas>
         </div>
         <div id="pres-meta" class="pres-meta"></div>
         <div class="pres-chart-wrap" style="margin-top:16px;">
-          <h3 style="font-family:'Playfair Display',serif;font-size:.9rem;color:var(--text2);margin-bottom:8px;">📈
-            Presidential turnout</h3>
-          <canvas id="presidentTurnoutChart" role="img" aria-label="Presidential votes trend"></canvas>
+          <h3 style="font-family:'Playfair Display',serif;font-size:.9rem;color:var(--text2);margin-bottom:8px;"> 📈
+            Opkomst presidentiële verkiezing</h3>
+          <canvas id="presidentTurnoutChart" role="img" aria-label="Stemtrend president"></canvas>
         </div>
       </div>
     </div>
-
-    <!-- ══ PARLIAMENT VIEW ══ -->
+    <!-- PARLIAMENT -->
     <div id="congress-view" style="display:none;">
-
       <div class="main-grid">
-        <!-- Parliament -->
         <div class="panel">
           <div class="panel-head">
             <div class="panel-icon">🏛</div>
-            <h2>Parliament Composition</h2>
+            <h2>Samenstelling parlement</h2>
             <span class="badge-count" id="badgeCount">—</span>
           </div>
-          <!-- Skeleton parliament -->
           <div id="parliamentSkeleton" class="parliament-skeleton">
             <div class="parl-sk-arc"></div>
             <div class="parl-sk-dots"></div>
@@ -137,14 +124,11 @@
           <div id="parliamentContainer" class="parliament-wrap" style="display:none;"></div>
           <div id="legendContainer" class="parl-legend"></div>
         </div>
-
-        <!-- Table -->
         <div class="panel">
           <div class="panel-head">
             <div class="panel-icon">📋</div>
-            <h2>Parliament Detail</h2>
+            <h2>Parlement details</h2>
           </div>
-          <!-- Skeleton table -->
           <div id="tableSkeleton" class="table-skeleton">
             <div class="sk-row sk-header"></div>
             <div class="sk-row"></div>
@@ -156,25 +140,23 @@
           <table class="party-table" id="partyTable" style="display:none;">
             <thead>
               <tr>
-                <th>Party</th>
-                <th style="width:130px">Seats</th>
-                <th>Members</th>
-                <th>Votes</th>
-                <th>% seats</th>
-                <th>Leader</th>
+                <th>Partij</th>
+                <th style="width:130px">Zetels</th>
+                <th>Leden</th>
+                <th>Stemmen</th>
+                <th>% zetels</th>
+                <th>Leider</th>
               </tr>
             </thead>
             <tbody id="partyTableBody"></tbody>
           </table>
         </div>
       </div>
-
-      <!-- Charts -->
       <div class="charts-row" style="margin-top:16px;">
         <div class="panel">
           <div class="panel-head">
             <div class="panel-icon">🥧</div>
-            <h2>Seats Distribution</h2>
+            <h2>Zetelverdeling</h2>
           </div>
           <div class="chart-inner" id="seatsChartWrap">
             <div class="sk-chart-block"></div>
@@ -184,7 +166,7 @@
         <div class="panel">
           <div class="panel-head">
             <div class="panel-icon">📊</div>
-            <h2>Members per Party — Parliament</h2>
+            <h2>Leden per partij — Parlement</h2>
           </div>
           <div class="chart-inner" id="membersChartWrap">
             <div class="sk-chart-block"></div>
@@ -192,13 +174,11 @@
           </div>
         </div>
       </div>
-
-      <!-- All parties -->
       <div class="single-chart-row" id="allPartiesRow" style="margin-top:16px;">
         <div class="panel all-parties-panel">
           <div class="panel-head">
             <div class="panel-icon">🗂</div>
-            <h2>All parties by members</h2>
+            <h2>Alle partijen op basis van leden</h2>
             <span class="badge-count" id="badgeAllParties">—</span>
           </div>
           <div class="ap-chart-outer" id="allPartiesChartWrap">
@@ -207,15 +187,11 @@
           </div>
         </div>
       </div>
-
-    </div><!-- /congress-view -->
-
-  </div><!-- /app -->
-
+    </div>
+  </div>
   <div class="tooltip" id="tooltip"></div>
   <script src="parliament.js"></script>
   <script src="app.js"></script>
-  <!-- Tom Select JS -->
   <script src="https://cdn.jsdelivr.net/npm/tom-select@2.2.2/dist/js/tom-select.complete.min.js"></script>
 </body>
 
