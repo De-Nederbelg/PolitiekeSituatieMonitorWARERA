@@ -199,7 +199,7 @@ function hideSkeleton() {
   if (apCanvas) apCanvas.style.display = "";
 }
 
-/* ── LANDEN LADEN (fallback Italië) ── */
+/* ── LANDEN LADEN (fallback België) ── */
 async function loadCountries() {
   const select = document.getElementById("countrySelect");
   if (!select) return;
@@ -238,7 +238,7 @@ async function loadCountries() {
       });
     });
 
-    // Selecteer Italië indien aanwezig, anders de eerste optie
+    // Selecteer België indien aanwezig, anders de eerste optie
     const belgiumOption = tomSelect.options["6813b6d446e731854c7ac7a4"];
     if (belgiumOption) {
       tomSelect.setValue("6813b6d446e731854c7ac7a4");
@@ -251,10 +251,10 @@ async function loadCountries() {
   } catch (err) {
     console.warn("⚠️ Kan landen niet laden:", err.message);
 
-    // Fallback: voeg alleen Italië toe
+    // Fallback: voeg alleen België toe
     tomSelect.addOption({
       value: "6813b6d446e731854c7ac7a2",
-      text: "Italië",
+      text: "België",
     });
     tomSelect.setValue("6813b6d446e731854c7ac7a2");
     select.tomselect = tomSelect;
@@ -1301,7 +1301,7 @@ document.addEventListener("DOMContentLoaded", () => {
   // Laad direct de landen en verkiezingen
   loadCountries();
 
-  // Initialiseer standaard het laden voor Italië
+  // Initialiseer standaard het laden voor België
   loadElectionsHistory();
 
   // Event listener voor het veranderen van land (verandert niet)
