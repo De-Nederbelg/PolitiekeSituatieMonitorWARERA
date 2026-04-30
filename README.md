@@ -1,3 +1,2 @@
-# PoliticalView
-Political view
-https://francescoparadiso.github.io/PoliticalView/
+# Nederlandse politieke monitor
+lekker vertaald because why not
