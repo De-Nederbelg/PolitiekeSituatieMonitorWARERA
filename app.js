@@ -21,9 +21,72 @@ const PALETTE = [
   "#f59e0b",
 ];
 
+// popup zoals aangevraagd door de originele maker
+
+/* ── START POPUP / CREDITS ── */
+function showForkPopup() {
+  const seenKey = "we_fork_popup_seen";
+
+  // Wil je de popup elke keer tonen? Zet deze 3 regels in commentaar.
+  if (sessionStorage.getItem(seenKey)) return;
+  sessionStorage.setItem(seenKey, "1");
+
+  const overlay = document.createElement("div");
+  overlay.id = "forkPopupOverlay";
+  overlay.innerHTML = `
+    <div class="fork-popup">
+      <button class="fork-popup-close" aria-label="Sluiten">×</button>
+
+      <h2>Politiek Overzicht Nederlands</h2>
+
+      <p>
+        Dit is een fork van de
+        <strong>PoliticalView</strong> website van
+        <strong>francescoparadiso</strong>.
+      </p>
+
+      <p>
+        Deze versie is vertaald naar het Nederlands door
+        <strong>De_Nederbelg</strong> voor
+        <strong>WarEra België en Nederland</strong>.
+      </p>
+
+      <div class="fork-popup-links">
+        <a href="https://francescoparadiso.github.io/PoliticalView/" target="_blank" rel="noopener">
+          Originele website
+        </a>
+        <a href="https://github.com/francescoparadiso/PoliticalView" target="_blank" rel="noopener">
+          Originele GitHub
+        </a>
+      </div>
+
+      <button class="fork-popup-ok">Begrepen</button>
+    </div>
+  `;
+
+  document.body.appendChild(overlay);
+
+  const close = () => overlay.remove();
+
+  overlay.querySelector(".fork-popup-close")?.addEventListener("click", close);
+  overlay.querySelector(".fork-popup-ok")?.addEventListener("click", close);
+
+  overlay.addEventListener("click", (e) => {
+    if (e.target === overlay) close();
+  });
+
+  document.addEventListener(
+    "keydown",
+    (e) => {
+      if (e.key === "Escape") close();
+    },
+    { once: true },
+  );
+}
+
 /* ── CACHE localStorage ── */
-const CACHE_TTL_SHORT = 3 * 60 * 1000;   // 3 min voor recente/live verkiezingen
-const CACHE_TTL_LONG = 60 * 60 * 1000;   // 1 uur voor stabielere data
+const CACHE_TTL_SHORT = 3 * 60 * 1000; // 3 min voor recente/live verkiezingen
+const CACHE_TTL_LONG = 60 * 60 * 1000; // 1 uur voor stabielere data
 
 function cacheKey(path, params) {
   return "we_" + path + "_" + JSON.stringify(params || {});
@@ -54,7 +117,6 @@ function cacheClear() {
       .forEach((k) => localStorage.removeItem(k));
   } catch (_) {}
 }
-
 
 /* ── PLUGIN centerText ── */
 const centerTextPlugin = {
@@ -98,8 +160,8 @@ let _electionHistory = [];
 let _currentCongressElectionId = null;
 let _timelineElectionIds = [];
 let _currentCountryId = "6813b6d446e731854c7ac7a4";
-let _currentCountryData = null;   // { population, name, rankings, ... }
-let _historicTurnouts = [];       // [{ electionId, totalVotes, date, seats }]
+let _currentCountryData = null; // { population, name, rankings, ... }
+let _historicTurnouts = []; // [{ electionId, totalVotes, date, seats }]
 let _lastAllParties = null;
 let _congressCountdownInterval = null;
 
@@ -153,7 +215,11 @@ function getPartyColor(partyId) {
   return color;
 }
 /* ── FETCH NAAR LOKALE SERVER ── */
-async function localFetch(path, params = {}, { useCache = true, ttl = null } = {}) {
+async function localFetch(
+  path,
+  params = {},
+  { useCache = true, ttl = null } = {},
+) {
   const key = cacheKey(path, params);
   if (useCache) {
     const cached = cacheGet(key);
@@ -176,7 +242,9 @@ async function localFetch(path, params = {}, { useCache = true, ttl = null } = {
   if (Array.isArray(json)) json = { items: json };
 
   if (useCache) {
-    const autoTtl = ttl ?? (cleanPath.includes("election") ? CACHE_TTL_SHORT : CACHE_TTL_LONG);
+    const autoTtl =
+      ttl ??
+      (cleanPath.includes("election") ? CACHE_TTL_SHORT : CACHE_TTL_LONG);
     cacheSet(key, json, autoTtl);
   }
   return json;
@@ -333,7 +401,16 @@ function exportCSV(parties, filename = "parlement.csv") {
     alert("Geen data om te exporteren.");
     return;
   }
-  const headers = ["Partij", "Afkorting", "Zetels", "Leden", "Stemmen", "Zetel %", "Leider", "Kleur"];
+  const headers = [
+    "Partij",
+    "Afkorting",
+    "Zetels",
+    "Leden",
+    "Stemmen",
+    "Zetel %",
+    "Leider",
+    "Kleur",
+  ];
   const totalSeats = parties.reduce((s, p) => s + p.seats, 0);
   const rows = parties.map((p) => [
     `"${String(p.name || "").replace(/"/g, '""')}"`,
@@ -393,7 +470,10 @@ async function loadPartyColors(csvUrl) {
     text.split("\n").forEach((line) => {
       line = line.trim();
       if (!line || line.startsWith("#")) return;
-      const parts = line.split(",").map((s) => s.trim()).filter(Boolean);
+      const parts = line
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
       if (parts.length >= 2) {
         const id = parts[0];
         const color = parts[parts.length - 1];
@@ -405,7 +485,6 @@ async function loadPartyColors(csvUrl) {
     console.warn("CSV-kleuren niet geladen:", err.message);
   }
 }
-
 
 /* ── VERKIEZINGSGESCHIEDENIS + TIJDLIJN ── */
 async function loadElectionsHistory() {
@@ -1344,7 +1423,9 @@ async function loadCongressElection(election) {
   const totalSeats = electedParties.reduce((s, p) => s + p.seats, 0);
   const majority = Math.floor(totalSeats / 2) + 1;
 
-  const totalVotes = election.votesCount || Object.values(partyVotesMap).reduce((s, v) => s + (Number(v) || 0), 0);
+  const totalVotes =
+    election.votesCount ||
+    Object.values(partyVotesMap).reduce((s, v) => s + (Number(v) || 0), 0);
 
   fillStat("stat-seats", totalSeats);
   fillStat("stat-parties", electedParties.length);
@@ -1364,7 +1445,8 @@ async function loadCongressElection(election) {
   const enpEl = document.getElementById("stat-enp-label");
   if (enpEl) {
     const v = parseFloat(enp);
-    enpEl.textContent = v <= 2.5 ? "Bipolair" : v <= 4 ? "Meerpartijen" : "Gefragmenteerd";
+    enpEl.textContent =
+      v <= 2.5 ? "Bipolair" : v <= 4 ? "Meerpartijen" : "Gefragmenteerd";
     enpEl.style.color = v <= 2.5 ? "#22c55e" : v <= 4 ? "#eab308" : "#ef4444";
   }
 
@@ -1396,7 +1478,6 @@ async function loadCongressElection(election) {
   renderSimulator(allParties, totalSeats);
 }
 
-
 /* ══════════════════════════════════════════════════════════════
    VERKIEZINGSSIMULATOR
    ─ Historische opkomst uit echte verkiezingsdata
@@ -1414,19 +1495,31 @@ function renderSimulator(allParties, totalSeatsCurrent) {
   if (!rawValue || isNaN(expectedVoters) || expectedVoters <= 0) {
     panel.style.display = "";
     const tbody = document.getElementById("simPartyBody");
-    if (tbody) tbody.innerHTML = '<tr><td colspan="6" style="color:var(--text3);">Vul een geldig aantal verwachte kiezers in</td></tr>';
-    document.getElementById("simExpVoters") && (document.getElementById("simExpVoters").textContent = "—");
-    document.getElementById("simVotesPerSeat") && (document.getElementById("simVotesPerSeat").textContent = "—");
-    document.getElementById("simVotesToWin") && (document.getElementById("simVotesToWin").textContent = "—");
+    if (tbody)
+      tbody.innerHTML =
+        '<tr><td colspan="6" style="color:var(--text3);">Vul een geldig aantal verwachte kiezers in</td></tr>';
+    document.getElementById("simExpVoters") &&
+      (document.getElementById("simExpVoters").textContent = "—");
+    document.getElementById("simVotesPerSeat") &&
+      (document.getElementById("simVotesPerSeat").textContent = "—");
+    document.getElementById("simVotesToWin") &&
+      (document.getElementById("simVotesToWin").textContent = "—");
     return;
   }
 
   panel.style.display = "";
-  const population = _currentCountryData?.rankings?.countryActivePopulation?.value || null;
+  const population =
+    _currentCountryData?.rankings?.countryActivePopulation?.value || null;
   const MAX_SEATS = 50;
-  const dynamicSeats = population ? Math.min(MAX_SEATS, Math.floor(population / 20) + 2) : null;
-  const totalSeats = dynamicSeats !== null ? dynamicSeats : Math.min(MAX_SEATS, totalSeatsCurrent || 0);
-  const votesPerSeat = totalSeats > 0 ? Math.round(expectedVoters / totalSeats) : null;
+  const dynamicSeats = population
+    ? Math.min(MAX_SEATS, Math.floor(population / 20) + 2)
+    : null;
+  const totalSeats =
+    dynamicSeats !== null
+      ? dynamicSeats
+      : Math.min(MAX_SEATS, totalSeatsCurrent || 0);
+  const votesPerSeat =
+    totalSeats > 0 ? Math.round(expectedVoters / totalSeats) : null;
   const votesToWinPres = Math.floor(expectedVoters / 2) + 1;
 
   const setText = (id, value) => {
@@ -1434,28 +1527,47 @@ function renderSimulator(allParties, totalSeatsCurrent) {
     if (el) el.textContent = value;
   };
   setText("simExpVoters", expectedVoters.toLocaleString());
-  setText("simVotesPerSeat", votesPerSeat ? votesPerSeat.toLocaleString() : "—");
+  setText(
+    "simVotesPerSeat",
+    votesPerSeat ? votesPerSeat.toLocaleString() : "—",
+  );
   setText("simVotesToWin", votesToWinPres.toLocaleString());
   setText("simSeats", totalSeats ? totalSeats.toLocaleString() : "—");
 
   const histRef = document.getElementById("simHistRef");
   if (histRef) {
-    histRef.innerHTML = _historicTurnouts.slice(-5).map((h, i, arr) => {
-      const d = new Date(h.date).toLocaleDateString("nl", { month: "short", year: "2-digit" });
-      const isLast = i === arr.length - 1;
-      return `<span class="sim-chip${isLast ? " sim-chip-latest" : ""}">${d} · ${(h.totalVotes || 0).toLocaleString()} stemmen</span>`;
-    }).join("");
+    histRef.innerHTML = _historicTurnouts
+      .slice(-5)
+      .map((h, i, arr) => {
+        const d = new Date(h.date).toLocaleDateString("nl", {
+          month: "short",
+          year: "2-digit",
+        });
+        const isLast = i === arr.length - 1;
+        return `<span class="sim-chip${isLast ? " sim-chip-latest" : ""}">${d} · ${(h.totalVotes || 0).toLocaleString()} stemmen</span>`;
+      })
+      .join("");
   }
 
-  const totalCurrentVotes = allParties.reduce((sum, p) => sum + (Number(p.votes) || 0), 0);
+  const totalCurrentVotes = allParties.reduce(
+    (sum, p) => sum + (Number(p.votes) || 0),
+    0,
+  );
   const rows = [...allParties]
-    .sort((a, b) => (b.votes || 0) - (a.votes || 0) || (b.members || 0) - (a.members || 0))
+    .sort(
+      (a, b) =>
+        (b.votes || 0) - (a.votes || 0) || (b.members || 0) - (a.members || 0),
+    )
     .map((p) => {
       const currentVotes = Number(p.votes) || 0;
       const share = totalCurrentVotes ? currentVotes / totalCurrentVotes : 0;
       const projectedVotes = Math.round(expectedVoters * share);
-      const projectedSeats = votesPerSeat ? Math.floor(projectedVotes / votesPerSeat) : 0;
-      const neededForNextSeat = votesPerSeat ? Math.max(0, (projectedSeats + 1) * votesPerSeat - projectedVotes) : null;
+      const projectedSeats = votesPerSeat
+        ? Math.floor(projectedVotes / votesPerSeat)
+        : 0;
+      const neededForNextSeat = votesPerSeat
+        ? Math.max(0, (projectedSeats + 1) * votesPerSeat - projectedVotes)
+        : null;
       const pct = (share * 100).toFixed(1);
       return `<tr>
         <td><div class="party-name-cell"><span class="party-color-bar" style="background:${p.color}"></span><span>${p.name}</span></div></td>
@@ -1474,7 +1586,10 @@ function renderSimulator(allParties, totalSeatsCurrent) {
 function onExpectedVotersChange() {
   const allParties = window._lastAllParties || _lastAllParties;
   if (!allParties) return;
-  const currentSeats = (window._lastElectedParties || []).reduce((sum, p) => sum + (p.seats || 0), 0);
+  const currentSeats = (window._lastElectedParties || []).reduce(
+    (sum, p) => sum + (p.seats || 0),
+    0,
+  );
   renderSimulator(allParties, currentSeats);
 }
 
@@ -1482,12 +1597,18 @@ function renderPresSimulator(candidates, totalVotes, election) {
   const panel = document.getElementById("presSimPanel");
   if (!panel) return;
 
-  const presHistoric = _electionHistory.filter((e) => e.type === "president" && e.votesCount > 0).slice(-5);
+  const presHistoric = _electionHistory
+    .filter((e) => e.type === "president" && e.votesCount > 0)
+    .slice(-5);
   const avgPresVotes = presHistoric.length
-    ? Math.round(presHistoric.reduce((sum, e) => sum + (e.votesCount || 0), 0) / presHistoric.length)
+    ? Math.round(
+        presHistoric.reduce((sum, e) => sum + (e.votesCount || 0), 0) /
+          presHistoric.length,
+      )
     : null;
   const input = document.getElementById("presSimVoters");
-  const expectedVoters = parseInt(input?.value, 10) || avgPresVotes || totalVotes || 0;
+  const expectedVoters =
+    parseInt(input?.value, 10) || avgPresVotes || totalVotes || 0;
   const toWin = Math.floor(expectedVoters / 2) + 1;
 
   panel.style.display = "";
@@ -1501,27 +1622,34 @@ function renderPresSimulator(candidates, totalVotes, election) {
 
   const histRef = document.getElementById("presSimHistRef");
   if (histRef) {
-    histRef.innerHTML = presHistoric.map((e, i) => {
-      const d = new Date(e.createdAt).toLocaleDateString("nl", { month: "short", year: "2-digit" });
-      const isLast = i === presHistoric.length - 1;
-      return `<span class="sim-chip${isLast ? " sim-chip-latest" : ""}">${d} · ${(e.votesCount || 0).toLocaleString()} stemmen</span>`;
-    }).join("");
+    histRef.innerHTML = presHistoric
+      .map((e, i) => {
+        const d = new Date(e.createdAt).toLocaleDateString("nl", {
+          month: "short",
+          year: "2-digit",
+        });
+        const isLast = i === presHistoric.length - 1;
+        return `<span class="sim-chip${isLast ? " sim-chip-latest" : ""}">${d} · ${(e.votesCount || 0).toLocaleString()} stemmen</span>`;
+      })
+      .join("");
   }
 
   const tbody = document.getElementById("presSimBody");
   if (!tbody) return;
-  const rows = [...candidates].sort((a, b) => b.votes - a.votes).map((c) => {
-    const share = totalVotes ? c.votes / totalVotes : 0;
-    const projectedVotes = Math.round(expectedVoters * share);
-    const gap = Math.max(0, toWin - projectedVotes);
-    return `<tr>
+  const rows = [...candidates]
+    .sort((a, b) => b.votes - a.votes)
+    .map((c) => {
+      const share = totalVotes ? c.votes / totalVotes : 0;
+      const projectedVotes = Math.round(expectedVoters * share);
+      const gap = Math.max(0, toWin - projectedVotes);
+      return `<tr>
       <td>${c.userData?.username || "—"}</td>
       <td>${c.votes.toLocaleString()}</td>
       <td>${(share * 100).toFixed(1)}%</td>
       <td>${projectedVotes.toLocaleString()}</td>
       <td>${gap ? gap.toLocaleString() : "✓"}</td>
     </tr>`;
-  });
+    });
   tbody.innerHTML = rows.join("");
 }
 
@@ -1607,13 +1735,17 @@ async function loadElection(id) {
 
 /* ── OPSTARTEN ── */
 document.addEventListener("DOMContentLoaded", () => {
+  // 0.5 Popup laden met credits
+  showForkPopup();
+
   // 1. Laad Belgische partijkleuren (als CSV aanwezig is), landen en verkiezingen
   loadPartyColors("parties_6813b6d446e731854c7ac7a4.csv").then(async () => {
     loadCountries();
 
     try {
       const data = await localFetch("/countries", {}, { useCache: false });
-      _currentCountryData = (data?.items || []).find((c) => c._id === _currentCountryId) || null;
+      _currentCountryData =
+        (data?.items || []).find((c) => c._id === _currentCountryId) || null;
     } catch (_) {
       _currentCountryData = null;
     }
@@ -1622,59 +1754,81 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   // 2. Land wisselen
-  document.getElementById("countrySelect")?.addEventListener("change", async function () {
-    const newCountryId = this.value;
-    if (newCountryId === _currentCountryId) return;
+  document
+    .getElementById("countrySelect")
+    ?.addEventListener("change", async function () {
+      const newCountryId = this.value;
+      if (newCountryId === _currentCountryId) return;
 
-    _currentCountryId = newCountryId;
-    _electionHistory = [];
-    _currentCongressElectionId = null;
-    _partyColorMap.clear();
-    _partyNamesMap.clear();
+      _currentCountryId = newCountryId;
+      _electionHistory = [];
+      _currentCongressElectionId = null;
+      _partyColorMap.clear();
+      _partyNamesMap.clear();
 
-    try {
-      const data = await localFetch("/countries", {}, { useCache: false });
-      _currentCountryData = (data?.items || []).find((c) => c._id === newCountryId) || null;
-    } catch (_) {
-      _currentCountryData = null;
-    }
-
-    setStatus("Laden…", "loading");
-
-    try {
-      await loadPartiesForCountry(_currentCountryId);
-      await loadElectionsHistory();
-
-      if (window.umami) {
-        window.umami.track("country-change", { country: _currentCountryId });
+      try {
+        const data = await localFetch("/countries", {}, { useCache: false });
+        _currentCountryData =
+          (data?.items || []).find((c) => c._id === newCountryId) || null;
+      } catch (_) {
+        _currentCountryData = null;
       }
-    } catch (err) {
-      console.error("Fout bij het wisselen van land:", err);
-      setStatus("Fout bij het laden van gegevens", "error");
-    }
-  });
+
+      setStatus("Laden…", "loading");
+
+      try {
+        await loadPartiesForCountry(_currentCountryId);
+        await loadElectionsHistory();
+
+        if (window.umami) {
+          window.umami.track("country-change", { country: _currentCountryId });
+        }
+      } catch (err) {
+        console.error("Fout bij het wisselen van land:", err);
+        setStatus("Fout bij het laden van gegevens", "error");
+      }
+    });
 
   // 3. Verkiezing laden
-  document.getElementById("loadBtn")?.addEventListener("click", () => loadElection());
-  document.getElementById("electionIdInput")?.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") loadElection();
-  });
-  document.getElementById("electionSelect")?.addEventListener("change", function () {
-    if (this.value) {
-      document.getElementById("electionIdInput").value = this.value;
-      loadElection(this.value);
-    }
-  });
+  document
+    .getElementById("loadBtn")
+    ?.addEventListener("click", () => loadElection());
+  document
+    .getElementById("electionIdInput")
+    ?.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") loadElection();
+    });
+  document
+    .getElementById("electionSelect")
+    ?.addEventListener("change", function () {
+      if (this.value) {
+        document.getElementById("electionIdInput").value = this.value;
+        loadElection(this.value);
+      }
+    });
 
   // 4. Extra controls uit de Italiaanse update
-  document.getElementById("exportCsvBtn")?.addEventListener("click", () => exportCSV(window._lastElectedParties));
-  document.getElementById("fullscreenBtn")?.addEventListener("click", openParliamentFullscreen);
-  document.getElementById("simExpectedVotersInput")?.addEventListener("input", onExpectedVotersChange);
-  document.getElementById("presSimVoters")?.addEventListener("input", onPresSimInput);
-  document.getElementById("overlayClose")?.addEventListener("click", closeParliamentFullscreen);
-  document.getElementById("parliamentOverlay")?.addEventListener("click", (e) => {
-    if (e.target === document.getElementById("parliamentOverlay")) closeParliamentFullscreen();
-  });
+  document
+    .getElementById("exportCsvBtn")
+    ?.addEventListener("click", () => exportCSV(window._lastElectedParties));
+  document
+    .getElementById("fullscreenBtn")
+    ?.addEventListener("click", openParliamentFullscreen);
+  document
+    .getElementById("simExpectedVotersInput")
+    ?.addEventListener("input", onExpectedVotersChange);
+  document
+    .getElementById("presSimVoters")
+    ?.addEventListener("input", onPresSimInput);
+  document
+    .getElementById("overlayClose")
+    ?.addEventListener("click", closeParliamentFullscreen);
+  document
+    .getElementById("parliamentOverlay")
+    ?.addEventListener("click", (e) => {
+      if (e.target === document.getElementById("parliamentOverlay"))
+        closeParliamentFullscreen();
+    });
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape") closeParliamentFullscreen();
   });
