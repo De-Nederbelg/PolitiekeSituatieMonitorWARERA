@@ -1,5 +1,5 @@
-const API_BASE = "https://both-shelve-usher.ngrok-free.dev/api";
-//const API_BASE = 'http://localhost:3000/api';
+//const API_BASE = "http://localhost:3000/api";
+const API_BASE = "https://politicalview-proxy.fra-paradiso2.workers.dev/cache";
 
 const APP_BASE = "https://app.warera.io";
 
@@ -20,6 +20,41 @@ const PALETTE = [
   "#0ea5e9",
   "#f59e0b",
 ];
+
+/* ── CACHE localStorage ── */
+const CACHE_TTL_SHORT = 3 * 60 * 1000;   // 3 min voor recente/live verkiezingen
+const CACHE_TTL_LONG = 60 * 60 * 1000;   // 1 uur voor stabielere data
+
+function cacheKey(path, params) {
+  return "we_" + path + "_" + JSON.stringify(params || {});
+}
+function cacheGet(key) {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return null;
+    const { data, ts, ttl } = JSON.parse(raw);
+    if (Date.now() - ts > ttl) {
+      localStorage.removeItem(key);
+      return null;
+    }
+    return data;
+  } catch (_) {
+    return null;
+  }
+}
+function cacheSet(key, data, ttl) {
+  try {
+    localStorage.setItem(key, JSON.stringify({ data, ts: Date.now(), ttl }));
+  } catch (_) {}
+}
+function cacheClear() {
+  try {
+    Object.keys(localStorage)
+      .filter((k) => k.startsWith("we_"))
+      .forEach((k) => localStorage.removeItem(k));
+  } catch (_) {}
+}
+
 
 /* ── PLUGIN centerText ── */
 const centerTextPlugin = {
@@ -50,6 +85,7 @@ const centerTextPlugin = {
 Chart.register(centerTextPlugin);
 
 let _partyColorMap = new Map();
+let _csvColorMap = new Map();
 let _partyNamesMap = new Map();
 let _seatsChart,
   _membersChart,
@@ -62,6 +98,10 @@ let _electionHistory = [];
 let _currentCongressElectionId = null;
 let _timelineElectionIds = [];
 let _currentCountryId = "6813b6d446e731854c7ac7a4";
+let _currentCountryData = null;   // { population, name, rankings, ... }
+let _historicTurnouts = [];       // [{ electionId, totalVotes, date, seats }]
+let _lastAllParties = null;
+let _congressCountdownInterval = null;
 
 /* ── SLIMME AFKORTINGEN ── */
 function makeAbbr(name) {
@@ -103,24 +143,43 @@ function stringToColor(str) {
 }
 
 function getPartyColor(partyId) {
-  // Als de kleur al is toegewezen (door een eerdere hash), hergebruik deze
+  // 1. Permanente kleuren uit CSV, indien aanwezig
+  if (_csvColorMap.has(partyId)) return _csvColorMap.get(partyId);
+  // 2. Kleuren die al in deze sessie gegenereerd zijn
   if (_partyColorMap.has(partyId)) return _partyColorMap.get(partyId);
-  // Genereer anders een deterministische kleur op basis van de ID en sla deze op
+  // 3. Deterministische fallback op basis van ID
   const color = stringToColor(partyId);
   _partyColorMap.set(partyId, color);
   return color;
 }
 /* ── FETCH NAAR LOKALE SERVER ── */
-async function localFetch(path, params = {}) {
+async function localFetch(path, params = {}, { useCache = true, ttl = null } = {}) {
+  const key = cacheKey(path, params);
+  if (useCache) {
+    const cached = cacheGet(key);
+    if (cached) return cached;
+  }
+
+  // De worker-proxy gebruikt paden zonder verplichte /api-prefix.
+  const cleanPath = path.replace("/api/", "");
   const qs = new URLSearchParams(params).toString();
-  const url = `${API_BASE}${path}${qs ? "?" + qs : ""}`;
+  const url = `${API_BASE}${cleanPath}${qs ? "?" + qs : ""}`;
+
   const headers = {
     ...(_apiKey && { Authorization: `Bearer ${_apiKey}` }),
-    "ngrok-skip-browser-warning": "true", // ← voeg deze regel toe
   };
+
   const res = await fetch(url, { headers });
-  if (!res.ok) throw new Error(`HTTP ${res.status} → ${path}`);
-  return await res.json();
+  if (!res.ok) throw new Error(`HTTP ${res.status} → ${cleanPath}`);
+
+  let json = await res.json();
+  if (Array.isArray(json)) json = { items: json };
+
+  if (useCache) {
+    const autoTtl = ttl ?? (cleanPath.includes("election") ? CACHE_TTL_SHORT : CACHE_TTL_LONG);
+    cacheSet(key, json, autoTtl);
+  }
+  return json;
 }
 
 /* ── HELPERS ── */
@@ -141,8 +200,10 @@ function resetStats() {
     "stat-seats",
     "stat-parties",
     "stat-elected",
+    "stat-totalvotes",
     "stat-majority",
     "stat-leader",
+    "stat-enp",
   ].forEach((id) => {
     const el = document.getElementById(id);
     if (!el) return;
@@ -150,6 +211,11 @@ function resetStats() {
     el.classList.add("skeleton-val");
     el.classList.remove("loaded");
   });
+  const enpLabel = document.getElementById("stat-enp-label");
+  if (enpLabel) {
+    enpLabel.textContent = "—";
+    enpLabel.style.color = "";
+  }
 }
 function safeDestroy(canvasId) {
   const existing = Chart.getChart(canvasId);
@@ -253,13 +319,93 @@ async function loadCountries() {
 
     // Fallback: voeg alleen België toe
     tomSelect.addOption({
-      value: "6813b6d446e731854c7ac7a2",
+      value: "6813b6d446e731854c7ac7a4",
       text: "België",
     });
-    tomSelect.setValue("6813b6d446e731854c7ac7a2");
+    tomSelect.setValue("6813b6d446e731854c7ac7a4");
     select.tomselect = tomSelect;
   }
 }
+
+/* ── EXPORT CSV ── */
+function exportCSV(parties, filename = "parlement.csv") {
+  if (!parties || !parties.length) {
+    alert("Geen data om te exporteren.");
+    return;
+  }
+  const headers = ["Partij", "Afkorting", "Zetels", "Leden", "Stemmen", "Zetel %", "Leider", "Kleur"];
+  const totalSeats = parties.reduce((s, p) => s + p.seats, 0);
+  const rows = parties.map((p) => [
+    `"${String(p.name || "").replace(/"/g, '""')}"`,
+    p.abbr,
+    p.seats,
+    p.members,
+    p.votes,
+    totalSeats ? ((p.seats / totalSeats) * 100).toFixed(2) : 0,
+    `"${String(p.leaderName || "").replace(/"/g, '""')}"`,
+    p.color,
+  ]);
+  const csv = [headers, ...rows].map((r) => r.join(",")).join("\n");
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+function openParliamentFullscreen() {
+  const container = document.getElementById("parliamentContainer");
+  const overlay = document.getElementById("parliamentOverlay");
+  const dest = document.getElementById("parliamentOverlayContent");
+  if (!container || !overlay || !dest) return;
+  const svg = container.querySelector("svg");
+  if (!svg) return;
+  overlay._svg = svg;
+  overlay._originalParent = svg.parentNode;
+  dest.innerHTML = "";
+  svg.style.width = "100%";
+  svg.style.height = "100%";
+  dest.appendChild(svg);
+  overlay.classList.add("active");
+  document.body.style.overflow = "hidden";
+}
+
+function closeParliamentFullscreen() {
+  const overlay = document.getElementById("parliamentOverlay");
+  if (!overlay) return;
+  overlay.classList.remove("active");
+  document.body.style.overflow = "";
+  if (overlay._svg && overlay._originalParent) {
+    overlay._svg.style.width = "";
+    overlay._svg.style.height = "";
+    overlay._originalParent.appendChild(overlay._svg);
+    overlay._svg = null;
+    overlay._originalParent = null;
+  }
+}
+
+async function loadPartyColors(csvUrl) {
+  try {
+    const res = await fetch(csvUrl);
+    if (!res.ok) throw new Error("CSV niet gevonden");
+    const text = await res.text();
+    text.split("\n").forEach((line) => {
+      line = line.trim();
+      if (!line || line.startsWith("#")) return;
+      const parts = line.split(",").map((s) => s.trim()).filter(Boolean);
+      if (parts.length >= 2) {
+        const id = parts[0];
+        const color = parts[parts.length - 1];
+        if (id && color) _csvColorMap.set(id, color);
+      }
+    });
+    console.log(`🎨 ${_csvColorMap.size} kleuren geladen uit CSV`);
+  } catch (err) {
+    console.warn("CSV-kleuren niet geladen:", err.message);
+  }
+}
+
 
 /* ── VERKIEZINGSGESCHIEDENIS + TIJDLIJN ── */
 async function loadElectionsHistory() {
@@ -1030,9 +1176,12 @@ async function loadPresidentialElection(election) {
     <a href="${APP_BASE}/country/${election.country}/election/${election._id}" target="_blank" class="pres-meta-link">Naar de verkiezing →</a>
   `;
   renderPresidentialTurnoutChart(election._id);
+  window._lastPresData = { candidates, totalVotes, election };
+  renderPresSimulator(candidates, totalVotes, election);
   document.getElementById("badgeCount").textContent =
     `Presidentieel · ${totalVotes} stemmen`;
   fillStat("stat-elected", candidates.length);
+  fillStat("stat-totalvotes", totalVotes.toLocaleString());
 }
 
 /* ── CONGRESVERKIEZING ── */
@@ -1195,11 +1344,29 @@ async function loadCongressElection(election) {
   const totalSeats = electedParties.reduce((s, p) => s + p.seats, 0);
   const majority = Math.floor(totalSeats / 2) + 1;
 
+  const totalVotes = election.votesCount || Object.values(partyVotesMap).reduce((s, v) => s + (Number(v) || 0), 0);
+
   fillStat("stat-seats", totalSeats);
   fillStat("stat-parties", electedParties.length);
   fillStat("stat-elected", elected.length);
+  fillStat("stat-totalvotes", totalVotes.toLocaleString());
   fillStat("stat-majority", majority);
   fillStat("stat-leader", electedParties[0]?.name || "—");
+
+  const enp = (() => {
+    const sumSq = electedParties.reduce((sum, p) => {
+      const share = totalSeats ? p.seats / totalSeats : 0;
+      return sum + share * share;
+    }, 0);
+    return sumSq > 0 ? (1 / sumSq).toFixed(2) : "—";
+  })();
+  fillStat("stat-enp", enp);
+  const enpEl = document.getElementById("stat-enp-label");
+  if (enpEl) {
+    const v = parseFloat(enp);
+    enpEl.textContent = v <= 2.5 ? "Bipolair" : v <= 4 ? "Meerpartijen" : "Gefragmenteerd";
+    enpEl.style.color = v <= 2.5 ? "#22c55e" : v <= 4 ? "#eab308" : "#ef4444";
+  }
 
   await new Promise((resolve) => requestAnimationFrame(resolve));
   hideSkeleton();
@@ -1218,8 +1385,150 @@ async function loadCongressElection(election) {
   const badge = `${electedParties.length} partijen · ${totalSeats} zetels`;
   setStatus(badge, "");
   document.getElementById("badgeCount").textContent = badge;
+  window._lastElectedParties = electedParties;
+  window._lastAllParties = allParties;
+  _lastAllParties = allParties;
 
   electedParties.forEach((p) => _partyNamesMap.set(p.id, p.name));
+
+  const input = document.getElementById("simExpectedVotersInput");
+  if (input && !input.value) input.value = totalVotes || "";
+  renderSimulator(allParties, totalSeats);
+}
+
+
+/* ══════════════════════════════════════════════════════════════
+   VERKIEZINGSSIMULATOR
+   ─ Historische opkomst uit echte verkiezingsdata
+   ─ Verwachte kiezers instelbaar
+   ─ Projectie per partij
+══════════════════════════════════════════════════════════════ */
+function renderSimulator(allParties, totalSeatsCurrent) {
+  const panel = document.getElementById("simulatorPanel");
+  if (!panel) return;
+
+  const inputEl = document.getElementById("simExpectedVotersInput");
+  const rawValue = inputEl?.value?.trim();
+  const expectedVoters = parseInt(rawValue, 10);
+
+  if (!rawValue || isNaN(expectedVoters) || expectedVoters <= 0) {
+    panel.style.display = "";
+    const tbody = document.getElementById("simPartyBody");
+    if (tbody) tbody.innerHTML = '<tr><td colspan="6" style="color:var(--text3);">Vul een geldig aantal verwachte kiezers in</td></tr>';
+    document.getElementById("simExpVoters") && (document.getElementById("simExpVoters").textContent = "—");
+    document.getElementById("simVotesPerSeat") && (document.getElementById("simVotesPerSeat").textContent = "—");
+    document.getElementById("simVotesToWin") && (document.getElementById("simVotesToWin").textContent = "—");
+    return;
+  }
+
+  panel.style.display = "";
+  const population = _currentCountryData?.rankings?.countryActivePopulation?.value || null;
+  const MAX_SEATS = 50;
+  const dynamicSeats = population ? Math.min(MAX_SEATS, Math.floor(population / 20) + 2) : null;
+  const totalSeats = dynamicSeats !== null ? dynamicSeats : Math.min(MAX_SEATS, totalSeatsCurrent || 0);
+  const votesPerSeat = totalSeats > 0 ? Math.round(expectedVoters / totalSeats) : null;
+  const votesToWinPres = Math.floor(expectedVoters / 2) + 1;
+
+  const setText = (id, value) => {
+    const el = document.getElementById(id);
+    if (el) el.textContent = value;
+  };
+  setText("simExpVoters", expectedVoters.toLocaleString());
+  setText("simVotesPerSeat", votesPerSeat ? votesPerSeat.toLocaleString() : "—");
+  setText("simVotesToWin", votesToWinPres.toLocaleString());
+  setText("simSeats", totalSeats ? totalSeats.toLocaleString() : "—");
+
+  const histRef = document.getElementById("simHistRef");
+  if (histRef) {
+    histRef.innerHTML = _historicTurnouts.slice(-5).map((h, i, arr) => {
+      const d = new Date(h.date).toLocaleDateString("nl", { month: "short", year: "2-digit" });
+      const isLast = i === arr.length - 1;
+      return `<span class="sim-chip${isLast ? " sim-chip-latest" : ""}">${d} · ${(h.totalVotes || 0).toLocaleString()} stemmen</span>`;
+    }).join("");
+  }
+
+  const totalCurrentVotes = allParties.reduce((sum, p) => sum + (Number(p.votes) || 0), 0);
+  const rows = [...allParties]
+    .sort((a, b) => (b.votes || 0) - (a.votes || 0) || (b.members || 0) - (a.members || 0))
+    .map((p) => {
+      const currentVotes = Number(p.votes) || 0;
+      const share = totalCurrentVotes ? currentVotes / totalCurrentVotes : 0;
+      const projectedVotes = Math.round(expectedVoters * share);
+      const projectedSeats = votesPerSeat ? Math.floor(projectedVotes / votesPerSeat) : 0;
+      const neededForNextSeat = votesPerSeat ? Math.max(0, (projectedSeats + 1) * votesPerSeat - projectedVotes) : null;
+      const pct = (share * 100).toFixed(1);
+      return `<tr>
+        <td><div class="party-name-cell"><span class="party-color-bar" style="background:${p.color}"></span><span>${p.name}</span></div></td>
+        <td>${currentVotes.toLocaleString()}</td>
+        <td>${pct}%</td>
+        <td>${projectedVotes.toLocaleString()}</td>
+        <td>${projectedSeats}</td>
+        <td>${neededForNextSeat !== null ? neededForNextSeat.toLocaleString() : "—"}</td>
+      </tr>`;
+    });
+
+  const tbody = document.getElementById("simPartyBody");
+  if (tbody) tbody.innerHTML = rows.join("");
+}
+
+function onExpectedVotersChange() {
+  const allParties = window._lastAllParties || _lastAllParties;
+  if (!allParties) return;
+  const currentSeats = (window._lastElectedParties || []).reduce((sum, p) => sum + (p.seats || 0), 0);
+  renderSimulator(allParties, currentSeats);
+}
+
+function renderPresSimulator(candidates, totalVotes, election) {
+  const panel = document.getElementById("presSimPanel");
+  if (!panel) return;
+
+  const presHistoric = _electionHistory.filter((e) => e.type === "president" && e.votesCount > 0).slice(-5);
+  const avgPresVotes = presHistoric.length
+    ? Math.round(presHistoric.reduce((sum, e) => sum + (e.votesCount || 0), 0) / presHistoric.length)
+    : null;
+  const input = document.getElementById("presSimVoters");
+  const expectedVoters = parseInt(input?.value, 10) || avgPresVotes || totalVotes || 0;
+  const toWin = Math.floor(expectedVoters / 2) + 1;
+
+  panel.style.display = "";
+  const setText = (id, value) => {
+    const el = document.getElementById(id);
+    if (el) el.textContent = value;
+  };
+  setText("presSimExpected", expectedVoters.toLocaleString());
+  setText("presSimToWin", toWin.toLocaleString());
+  setText("presSimAvgHist", avgPresVotes ? avgPresVotes.toLocaleString() : "—");
+
+  const histRef = document.getElementById("presSimHistRef");
+  if (histRef) {
+    histRef.innerHTML = presHistoric.map((e, i) => {
+      const d = new Date(e.createdAt).toLocaleDateString("nl", { month: "short", year: "2-digit" });
+      const isLast = i === presHistoric.length - 1;
+      return `<span class="sim-chip${isLast ? " sim-chip-latest" : ""}">${d} · ${(e.votesCount || 0).toLocaleString()} stemmen</span>`;
+    }).join("");
+  }
+
+  const tbody = document.getElementById("presSimBody");
+  if (!tbody) return;
+  const rows = [...candidates].sort((a, b) => b.votes - a.votes).map((c) => {
+    const share = totalVotes ? c.votes / totalVotes : 0;
+    const projectedVotes = Math.round(expectedVoters * share);
+    const gap = Math.max(0, toWin - projectedVotes);
+    return `<tr>
+      <td>${c.userData?.username || "—"}</td>
+      <td>${c.votes.toLocaleString()}</td>
+      <td>${(share * 100).toFixed(1)}%</td>
+      <td>${projectedVotes.toLocaleString()}</td>
+      <td>${gap ? gap.toLocaleString() : "✓"}</td>
+    </tr>`;
+  });
+  tbody.innerHTML = rows.join("");
+}
+
+function onPresSimInput() {
+  if (!window._lastPresData) return;
+  const { candidates, totalVotes, election } = window._lastPresData;
+  renderPresSimulator(candidates, totalVotes, election);
 }
 
 /* ── HOOFDINGANG ── */
@@ -1298,55 +1607,75 @@ async function loadElection(id) {
 
 /* ── OPSTARTEN ── */
 document.addEventListener("DOMContentLoaded", () => {
-  // Laad direct de landen en verkiezingen
-  loadCountries();
+  // 1. Laad Belgische partijkleuren (als CSV aanwezig is), landen en verkiezingen
+  loadPartyColors("parties_6813b6d446e731854c7ac7a4.csv").then(async () => {
+    loadCountries();
 
-  // Initialiseer standaard het laden voor België
-  loadElectionsHistory();
+    try {
+      const data = await localFetch("/countries", {}, { useCache: false });
+      _currentCountryData = (data?.items || []).find((c) => c._id === _currentCountryId) || null;
+    } catch (_) {
+      _currentCountryData = null;
+    }
 
-  // Event listener voor het veranderen van land (verandert niet)
-  document
-    .getElementById("countrySelect")
-    .addEventListener("change", async function () {
-      const newCountryId = this.value;
-      if (newCountryId === _currentCountryId) return;
+    loadElectionsHistory();
+  });
 
-      _currentCountryId = newCountryId;
+  // 2. Land wisselen
+  document.getElementById("countrySelect")?.addEventListener("change", async function () {
+    const newCountryId = this.value;
+    if (newCountryId === _currentCountryId) return;
 
-      _electionHistory = [];
-      _currentCongressElectionId = null;
+    _currentCountryId = newCountryId;
+    _electionHistory = [];
+    _currentCongressElectionId = null;
+    _partyColorMap.clear();
+    _partyNamesMap.clear();
 
-      setStatus("Laden…", "loading");
+    try {
+      const data = await localFetch("/countries", {}, { useCache: false });
+      _currentCountryData = (data?.items || []).find((c) => c._id === newCountryId) || null;
+    } catch (_) {
+      _currentCountryData = null;
+    }
 
-      try {
-        await loadPartiesForCountry(_currentCountryId);
-        await loadElectionsHistory();
+    setStatus("Laden…", "loading");
 
-        // Volg het veranderen van land op Umami
-        if (window.umami) {
-          window.umami.track("country-change", { country: _currentCountryId });
-        }
-      } catch (err) {
-        console.error("Fout bij het wisselen van land:", err);
-        setStatus("Fout bij het laden van gegevens", "error");
+    try {
+      await loadPartiesForCountry(_currentCountryId);
+      await loadElectionsHistory();
+
+      if (window.umami) {
+        window.umami.track("country-change", { country: _currentCountryId });
       }
-    });
+    } catch (err) {
+      console.error("Fout bij het wisselen van land:", err);
+      setStatus("Fout bij het laden van gegevens", "error");
+    }
+  });
 
-  // Andere listeners blijven hetzelfde
-  document
-    .getElementById("loadBtn")
-    .addEventListener("click", () => loadElection());
-  document
-    .getElementById("electionIdInput")
-    .addEventListener("keydown", (e) => {
-      if (e.key === "Enter") loadElection();
-    });
-  document
-    .getElementById("electionSelect")
-    .addEventListener("change", function () {
-      if (this.value) {
-        document.getElementById("electionIdInput").value = this.value;
-        loadElection(this.value);
-      }
-    });
+  // 3. Verkiezing laden
+  document.getElementById("loadBtn")?.addEventListener("click", () => loadElection());
+  document.getElementById("electionIdInput")?.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") loadElection();
+  });
+  document.getElementById("electionSelect")?.addEventListener("change", function () {
+    if (this.value) {
+      document.getElementById("electionIdInput").value = this.value;
+      loadElection(this.value);
+    }
+  });
+
+  // 4. Extra controls uit de Italiaanse update
+  document.getElementById("exportCsvBtn")?.addEventListener("click", () => exportCSV(window._lastElectedParties));
+  document.getElementById("fullscreenBtn")?.addEventListener("click", openParliamentFullscreen);
+  document.getElementById("simExpectedVotersInput")?.addEventListener("input", onExpectedVotersChange);
+  document.getElementById("presSimVoters")?.addEventListener("input", onPresSimInput);
+  document.getElementById("overlayClose")?.addEventListener("click", closeParliamentFullscreen);
+  document.getElementById("parliamentOverlay")?.addEventListener("click", (e) => {
+    if (e.target === document.getElementById("parliamentOverlay")) closeParliamentFullscreen();
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") closeParliamentFullscreen();
+  });
 });
